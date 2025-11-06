@@ -8,7 +8,5 @@
     "build": "node build.mjs",
     "rebuild": "npm run fetch:data && npm run build"
   },
-  "engines": {
-    "node": ">=18"
-  }
+  "engines": { "node": ">=18" }
 }
