@@ -10,13 +10,15 @@ permissions:
   pages: write
   id-token: write
 
+# IMPORTANT: don't auto-cancel a running build when you push again
 concurrency:
-  group: "pages"
-  cancel-in-progress: true
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,8 +28,24 @@ jobs:
         with:
           node-version: 20
 
-      - name: Build (uses local 66-book dataset committed in repo)
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      # Option A: always build from the local 66-book dataset we fetch here
+      - name: Fetch full KJV dataset (66 books)
+        run: npm run fetch:data
+
+      - name: Build site
+        env:
+          SITE: https://kjv.the-holy-bible.online
+          CNAME: kjv.the-holy-bible.online
         run: npm run build
+
+      # Quick sanity so we don't deploy an empty site by mistake
+      - name: Smoke check sitemaps
+        run: |
+          test -f dist/sitemap-index.xml
+          ls -1 dist/sitemaps | wc -l
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
@@ -40,6 +58,9 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
