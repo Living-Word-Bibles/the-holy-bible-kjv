@@ -1,6 +1,6 @@
-// build.mjs — KJV Verse-per-Page static site builder
+// build.mjs — KJV Verse-per-Page static site builder (v1.2 Alpha tweaks)
 // Output: ./dist with /book-slug/chapter/verse/index.html for every verse
-// Requires Node 18+ (Node 20 recommended). package.json should set "type":"module".
+// Node 18+ (Node 20 recommended). package.json should set "type":"module".
 
 import fs from "fs/promises";
 import path from "path";
@@ -29,7 +29,7 @@ const BASES = [
   "https://raw.githubusercontent.com/aruljohn/Bible-kjv-1611/master/"
 ];
 
-// OT/NT ordering (for reliable prev/next across books)
+// OT/NT ordering
 const OT = ['Genesis','Exodus','Leviticus','Numbers','Deuteronomy','Joshua','Judges','Ruth','1 Samuel','2 Samuel','1 Kings','2 Kings','1 Chronicles','2 Chronicles','Ezra','Nehemiah','Esther','Job','Psalms','Proverbs','Ecclesiastes','Song of Solomon','Isaiah','Jeremiah','Lamentations','Ezekiel','Daniel','Hosea','Joel','Amos','Obadiah','Jonah','Micah','Nahum','Habakkuk','Zephaniah','Haggai','Zechariah','Malachi'];
 const NT = ['Matthew','Mark','Luke','John','Acts','Romans','1 Corinthians','2 Corinthians','Galatians','Ephesians','Philippians','Colossians','1 Thessalonians','2 Thessalonians','1 Timothy','2 Timothy','Titus','Philemon','Hebrews','James','1 Peter','2 Peter','1 John','2 John','3 John','Jude','Revelation'];
 
@@ -59,9 +59,7 @@ async function fetchJSON(url){
   return JSON.parse(await r.text());
 }
 async function loadJSON(rel){
-  // Try local first
   try { return await readLocalJSON(rel); } catch {}
-  // Try remote fallbacks
   let lastErr = "";
   for (const base of BASES){
     const u = base + rel;
@@ -72,7 +70,7 @@ async function loadJSON(rel){
   throw new Error(`Unable to load ${rel}. ${lastErr||""}`);
 }
 
-// Normalize various book JSON shapes into a common { chapters: { [n]: { verseCount, verses: { '1':'text', ... }}}}
+// Normalize book JSON into { chapters: { [n]: { verseCount, verses:{ '1': 'text', ... }}}}
 function normalizeBook(name, data){
   const out = { name, chapters:{} };
   const addChapter = (chNum, versesObj)=>{
@@ -111,7 +109,19 @@ function normalizeBook(name, data){
   throw new Error("Unrecognized book JSON structure.");
 }
 
-// -------- HTML template --------
+// -------- Icons (inline SVG) --------
+function icon(name){
+  const map = {
+    facebook: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 22v-9h3l1-4h-4V7a2 2 0 0 1 2-2h2V1h-3a5 5 0 0 0-5 5v3H7v4h3v9h3z"/></svg>',
+    instagram:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2h10a5 5 0 0 1 5 5v10a5 5 0 0 1-5 5H7a5 5 0 0 1-5-5V7a5 5 0 0 1 5-5zm5 5a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm6.5-1.8a1.2 1.2 0 1 0 0 2.4 1.2 1.2 0 0 0 0-2.4z"/></svg>',
+    x:        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.3 2H22l-9.7 11.1L21.4 22h-7l-5.5-6.7L2.6 22H2l8.6-9.8L2 2h7l5 6.1L18.3 2z"/></svg>',
+    linkedin: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.98 3.5C4.98 4.9 3.9 5.9 2.5 5.9S0 4.9 0 3.5 1.1 1.5 2.5 1.5 5 2.9 5 3.5zM0 8.98h5V24H0zM8.48 8.98H13v2.05h.07c.63-1.2 2.16-2.47 4.45-2.47 4.76 0 5.64 3.14 5.64 7.23V24h-5v-6.56c0-1.56-.03-3.56-2.17-3.56-2.17 0-2.5 1.7-2.5 3.45V24h-5V8.98z"/></svg>',
+    email:    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 4h20v16H2V4zm10 7L3.5 6.5h17L12 11zm0 2l8.5-6.5V20h-17V6.5L12 13z"/></svg>'
+  };
+  return map[name] || "";
+}
+
+// -------- HTML helpers --------
 function verseUrl(ref){ return `/${ref.bookSlug}/${ref.chapter}/${ref.verse}/`; }
 function canonicalUrl(ref){ return `${SITE}${verseUrl(ref)}`; }
 function shareLinks(ref, bookName, verseText){
@@ -180,7 +190,8 @@ ${JSON.stringify({
     <div class="brand-h2">King James Version</div>
   </div>
   <nav class="site-nav">
-    <a class="btn" href="https://www.livingwordbibles.com/read-the-bible-online#/genesis/1/1" target="_blank" rel="noopener">The Holy Bible</a>
+    <!-- Mobile-safe button (Issue #1) -->
+    <a class="btn btn-primary" href="https://www.livingwordbibles.com/read-the-bible-online#/genesis/1/1" target="_blank" rel="noopener">The Holy Bible</a>
   </nav>
 </header>
 
@@ -196,11 +207,12 @@ ${JSON.stringify({
   </nav>
 
   <section class="share">
-    <button class="shbtn" onclick="window.open('${share.facebook}','_blank','noopener')">Facebook</button>
-    <a class="shbtn" href="https://www.instagram.com/living.word.bibles/" target="_blank" rel="noopener">Instagram</a>
-    <button class="shbtn" onclick="window.open('${share.x}','_blank','noopener')">X</button>
-    <button class="shbtn" onclick="window.open('${share.linkedin}','_blank','noopener')">LinkedIn</button>
-    <a class="shbtn" href="${share.email}">Email</a>
+    <!-- Social icons visible (Issue #5) -->
+    <button class="shbtn" onclick="window.open('${share.facebook}','_blank','noopener')">${icon('facebook')}<span>Facebook</span></button>
+    <a class="shbtn" href="https://www.instagram.com/living.word.bibles/" target="_blank" rel="noopener">${icon('instagram')}<span>Instagram</span></a>
+    <button class="shbtn" onclick="window.open('${share.x}','_blank','noopener')">${icon('x')}<span>X</span></button>
+    <button class="shbtn" onclick="window.open('${share.linkedin}','_blank','noopener')">${icon('linkedin')}<span>LinkedIn</span></button>
+    <a class="shbtn" href="${share.email}">${icon('email')}<span>Email</span></a>
   </section>
 
   <aside class="meta">
@@ -210,14 +222,18 @@ ${JSON.stringify({
 
 <footer class="site-foot">
   <div>Copyright © 2025 | <a href="https://www.livingwordbibles.com" target="_blank" rel="noopener">Living Word Bibles</a> | All Rights Reserved</div>
-  <div>KJV Online — Verse-per-Page</div>
+  <div>The Holy Bible Online — v1.2 Alpha</div>
 </footer>
 </body>
 </html>`;
 }
 
-// Simple home page and 404
+// Home + 404
 function homeHTML(){
+  // Issues #2, #3, #4 addressed here
+  const otList = OT.map(b=>`<li><a href="/${slugify(b)}/1/1/">${b}</a></li>`).join("");
+  const ntList = NT.map(b=>`<li><a href="/${slugify(b)}/1/1/">${b}</a></li>`).join("");
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -236,21 +252,26 @@ ${FONT_LINK}
     <div class="brand-h2">King James Version</div>
   </div>
   <nav class="site-nav">
-    <a class="btn" href="/genesis/1/1/">Start at Genesis 1:1</a>
+    <a class="btn btn-primary" href="/genesis/1/1/">Start at Genesis 1:1</a>
   </nav>
 </header>
 <main class="container">
-  <p>Welcome. This is the KJV Bible presented one verse per page for maximum readability and indexability.</p>
-  <ul class="booklist">
-    ${[...OT, ...NT].map(b=>`<li><a href="/${slugify(b)}/1/1/">${b}</a></li>`).join("")}
-  </ul>
+  <p class="welcome">Welcome! God Bless! The Holy Bible Online presents the King James Version verse-by-verse for maximum readability.</p>
+
+  <h2 class="toc-heading">The Old Testament</h2>
+  <ul class="booklist">${otList}</ul>
+
+  <h2 class="toc-heading">The New Testament</h2>
+  <ul class="booklist">${ntList}</ul>
 </main>
 <footer class="site-foot">
   <div>Copyright © 2025 | <a href="https://www.livingwordbibles.com" target="_blank" rel="noopener">Living Word Bibles</a></div>
+  <div>The Holy Bible Online — v1.2 Alpha</div>
 </footer>
 </body>
 </html>`;
 }
+
 function notFoundHTML(){
   return `<!DOCTYPE html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -259,10 +280,16 @@ ${FONT_LINK}
 <link rel="stylesheet" href="/assets/styles.css">
 </head><body>
 <main class="container"><h1>404 — Not Found</h1><p>Try starting at <a href="/genesis/1/1/">Genesis 1:1</a>.</p></main>
+<footer class="site-foot">
+  <div>Copyright © 2025 | <a href="https://www.livingwordbibles.com" target="_blank" rel="noopener">Living Word Bibles</a></div>
+  <div>The Holy Bible Online — v1.2 Alpha</div>
+</footer>
 </body></html>`;
 }
 
-// Shared CSS (EB Garamond + clean layout)
+// Shared CSS (mobile fixes + icons)
+// - Issue #1 & #4: header/nav wraps on small screens; buttons become full-width and visible.
+// - Issue #5: social icons styled and always visible.
 const CSS = `
 :root{--maxw:880px;--bg:#fff;--ink:#111;--muted:#666;--line:#eee}
 *{box-sizing:border-box}
@@ -270,26 +297,36 @@ body{margin:0;background:#fafafa;color:var(--ink);font-family:"EB Garamond",Gara
 a{color:inherit}
 .container{max-width:var(--maxw);margin:1rem auto;background:#fff;border:1px solid #ddd;border-radius:16px;box-shadow:0 2px 16px rgba(0,0,0,.08);padding:1rem 1.2rem}
 .site-head,.site-foot{max-width:var(--maxw);margin:1rem auto;padding:.8rem 1rem;display:flex;align-items:center;gap:.8rem;background:#fff;border:1px solid #ddd;border-radius:16px}
-.site-head{justify-content:space-between}
+.site-head{justify-content:space-between;flex-wrap:wrap} /* allow wrap on mobile */
 .brand{display:flex;align-items:center;gap:.6rem;text-decoration:none}
 .logo{height:64px;object-fit:contain}
 .brand-titles .brand-h1{font-weight:700;font-size:1.35rem}
 .brand-titles .brand-h2{font-size:1rem;color:#6b7280}
-.site-nav .btn{border:1px solid #bbb;background:#fff;border-radius:999px;padding:.42rem .7rem;text-decoration:none}
-.site-nav .btn:hover{background:#f3f3f3}
+.site-nav{display:flex;flex-wrap:wrap;gap:.5rem}
+.btn{border:1px solid #bbb;background:#fff;border-radius:999px;padding:.48rem .9rem;text-decoration:none;display:inline-flex;align-items:center;gap:.4rem}
+.btn:hover{background:#f3f3f3}
+.btn-primary{border-color:#888}
 .ref{margin:.2rem 0 .6rem 0}
 .verse p{font-size:1.2rem;line-height:1.75}
 .vnum{font-variant-numeric:tabular-nums;color:#666;margin-right:.25rem}
 .pager{display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--line);margin-top:1rem;padding-top:.6rem}
 .pager .btn{border:1px solid #bbb;background:#fff;border-radius:10px;padding:.42rem .6rem;text-decoration:none}
 .share{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;border-top:1px solid var(--line);margin-top:1rem;padding-top:.8rem}
-.shbtn{border:1px solid #bbb;background:#fff;border-radius:999px;padding:.38rem .7rem;cursor:pointer}
+.shbtn{border:1px solid #bbb;background:#fff;border-radius:999px;padding:.38rem .7rem;cursor:pointer;display:inline-flex;align-items:center;gap:.4rem}
 .shbtn:hover{background:#f3f3f3}
+.shbtn svg{width:18px;height:18px;fill:currentColor;flex:0 0 auto} /* ensure visible icons */
 .meta{color:var(--muted);font-size:.95rem;margin-top:.6rem}
 .site-foot{justify-content:space-between;color:#666}
-.booklist{columns:2;gap:1.5rem}
+.booklist{columns:2;gap:1.5rem;margin:.25rem 0 1rem}
 .booklist a{text-decoration:none;border-bottom:1px dotted #aaa}
-@media (max-width:720px){.booklist{columns:1}}
+.toc-heading{font-size:1.15rem;margin:.6rem 0 .2rem;color:#333}
+.welcome{font-size:1.05rem;margin:0 0 .8rem}
+@media (max-width:720px){
+  .logo{height:52px}
+  .site-nav{width:100%;justify-content:center}
+  .site-nav .btn{width:100%;justify-content:center} /* full width on mobile (Issues #1 & #4) */
+  .booklist{columns:1}
+}
 `;
 
 // -------- Build routine --------
@@ -303,7 +340,7 @@ async function writeStaticAssets(){
 }
 
 async function loadIndex(){
-  return await loadJSON("Books.json"); // array of canonical book names matching filenames
+  return await loadJSON("Books.json"); // array of canonical book names
 }
 
 async function loadBook(slug, name){
@@ -311,11 +348,9 @@ async function loadBook(slug, name){
   return normalizeBook(name, raw);
 }
 
-function flattenRefs(indexList, booksMap){
-  // returns an array of {bookName, bookSlug, chapter, verse, text}
-  const orderedNames = [...OT, ...NT];
+function flattenRefs(booksMap){
   const out = [];
-  for (const name of orderedNames){
+  for (const name of [...OT, ...NT]){
     const slug = slugify(name);
     const book = booksMap.get(slug);
     if (!book) continue;
@@ -335,9 +370,8 @@ async function buildAll(){
   await cleanOut();
   await writeStaticAssets();
 
-  const names = await loadIndex(); // we won’t rely on its order; we use OT+NT arrays
+  const names = await loadIndex();
   const nameSet = new Set(names);
-  // Load books into a map by slug (only those present in Books.json)
   const books = new Map();
   for (const name of [...OT, ...NT]){
     if (!nameSet.has(name)) {
@@ -349,7 +383,7 @@ async function buildAll(){
     books.set(slug, book);
   }
 
-  const refs = flattenRefs(names, books);
+  const refs = flattenRefs(books);
   console.log(`Loaded ${books.size} books; generating ${refs.length} verse pages…`);
 
   // Create pages and build sitemap
@@ -374,14 +408,11 @@ async function buildAll(){
     });
 
     await fs.writeFile(path.join(outDir, "index.html"), html);
-
-    const loc = `${SITE}${verseUrl(curr)}`;
-    sitemap += `  <url><loc>${loc}</loc></url>\n`;
+    sitemap += `  <url><loc>${SITE}${verseUrl(curr)}</loc></url>\n`;
   }
   sitemap += `</urlset>\n`;
   await fs.writeFile(path.join(OUT_DIR, "sitemap.xml"), sitemap);
 
-  // robots.txt
   const robots = `User-agent: *\nAllow: /\nSitemap: ${SITE}/sitemap.xml\n`;
   await fs.writeFile(path.join(OUT_DIR, "robots.txt"), robots);
 
