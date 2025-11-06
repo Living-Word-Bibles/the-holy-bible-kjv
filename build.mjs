@@ -1,6 +1,7 @@
-// build.mjs — KJV Verse-per-Page static site builder (v1.2 Alpha tweaks)
+// build.mjs — KJV Verse-per-Page static site builder (v1.2 Alpha + sitemap index)
 // Output: ./dist with /book-slug/chapter/verse/index.html for every verse
-// Node 18+ (Node 20 recommended). package.json should set "type":"module".
+// Also writes: /sitemap-index.xml and /sitemaps/<book>.xml (plus /sitemap.xml alias)
+// Node 18+ required (Node 20 recommended). package.json should set "type":"module".
 
 import fs from "fs/promises";
 import path from "path";
@@ -11,7 +12,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.join(__dirname, "dist");
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "Bible-kjv-master");
 
-// Public site URL and domain (used for canonical, sitemap, robots, share links)
 const SITE = process.env.SITE || "https://kjv.the-holy-bible.online";
 const CNAME = process.env.CNAME || "kjv.the-holy-bible.online";
 
@@ -70,7 +70,7 @@ async function loadJSON(rel){
   throw new Error(`Unable to load ${rel}. ${lastErr||""}`);
 }
 
-// Normalize book JSON into { chapters: { [n]: { verseCount, verses:{ '1': 'text', ... }}}}
+// Normalize book JSON into { chapters: { [n]: { verseCount, verses:{ '1':'text', ... }}}}
 function normalizeBook(name, data){
   const out = { name, chapters:{} };
   const addChapter = (chNum, versesObj)=>{
@@ -190,7 +190,6 @@ ${JSON.stringify({
     <div class="brand-h2">King James Version</div>
   </div>
   <nav class="site-nav">
-    <!-- Mobile-safe button (Issue #1) -->
     <a class="btn btn-primary" href="https://www.livingwordbibles.com/read-the-bible-online#/genesis/1/1" target="_blank" rel="noopener">The Holy Bible</a>
   </nav>
 </header>
@@ -207,7 +206,6 @@ ${JSON.stringify({
   </nav>
 
   <section class="share">
-    <!-- Social icons visible (Issue #5) -->
     <button class="shbtn" onclick="window.open('${share.facebook}','_blank','noopener')">${icon('facebook')}<span>Facebook</span></button>
     <a class="shbtn" href="https://www.instagram.com/living.word.bibles/" target="_blank" rel="noopener">${icon('instagram')}<span>Instagram</span></a>
     <button class="shbtn" onclick="window.open('${share.x}','_blank','noopener')">${icon('x')}<span>X</span></button>
@@ -230,7 +228,6 @@ ${JSON.stringify({
 
 // Home + 404
 function homeHTML(){
-  // Issues #2, #3, #4 addressed here
   const otList = OT.map(b=>`<li><a href="/${slugify(b)}/1/1/">${b}</a></li>`).join("");
   const ntList = NT.map(b=>`<li><a href="/${slugify(b)}/1/1/">${b}</a></li>`).join("");
 
@@ -287,9 +284,7 @@ ${FONT_LINK}
 </body></html>`;
 }
 
-// Shared CSS (mobile fixes + icons)
-// - Issue #1 & #4: header/nav wraps on small screens; buttons become full-width and visible.
-// - Issue #5: social icons styled and always visible.
+// Shared CSS (includes mobile fixes + visible icons)
 const CSS = `
 :root{--maxw:880px;--bg:#fff;--ink:#111;--muted:#666;--line:#eee}
 *{box-sizing:border-box}
@@ -297,7 +292,7 @@ body{margin:0;background:#fafafa;color:var(--ink);font-family:"EB Garamond",Gara
 a{color:inherit}
 .container{max-width:var(--maxw);margin:1rem auto;background:#fff;border:1px solid #ddd;border-radius:16px;box-shadow:0 2px 16px rgba(0,0,0,.08);padding:1rem 1.2rem}
 .site-head,.site-foot{max-width:var(--maxw);margin:1rem auto;padding:.8rem 1rem;display:flex;align-items:center;gap:.8rem;background:#fff;border:1px solid #ddd;border-radius:16px}
-.site-head{justify-content:space-between;flex-wrap:wrap} /* allow wrap on mobile */
+.site-head{justify-content:space-between;flex-wrap:wrap}
 .brand{display:flex;align-items:center;gap:.6rem;text-decoration:none}
 .logo{height:64px;object-fit:contain}
 .brand-titles .brand-h1{font-weight:700;font-size:1.35rem}
@@ -314,7 +309,7 @@ a{color:inherit}
 .share{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;border-top:1px solid var(--line);margin-top:1rem;padding-top:.8rem}
 .shbtn{border:1px solid #bbb;background:#fff;border-radius:999px;padding:.38rem .7rem;cursor:pointer;display:inline-flex;align-items:center;gap:.4rem}
 .shbtn:hover{background:#f3f3f3}
-.shbtn svg{width:18px;height:18px;fill:currentColor;flex:0 0 auto} /* ensure visible icons */
+.shbtn svg{width:18px;height:18px;fill:currentColor;flex:0 0 auto}
 .meta{color:var(--muted);font-size:.95rem;margin-top:.6rem}
 .site-foot{justify-content:space-between;color:#666}
 .booklist{columns:2;gap:1.5rem;margin:.25rem 0 1rem}
@@ -324,7 +319,7 @@ a{color:inherit}
 @media (max-width:720px){
   .logo{height:52px}
   .site-nav{width:100%;justify-content:center}
-  .site-nav .btn{width:100%;justify-content:center} /* full width on mobile (Issues #1 & #4) */
+  .site-nav .btn{width:100%;justify-content:center}
   .booklist{columns:1}
 }
 `;
@@ -366,12 +361,34 @@ function flattenRefs(booksMap){
   return out;
 }
 
+function urlsByBook(refs){
+  const map = new Map(); // slug -> array of absolute URLs
+  for (const r of refs){
+    const list = map.get(r.bookSlug) || [];
+    list.push(`${SITE}${verseUrl(r)}`);
+    map.set(r.bookSlug, list);
+  }
+  return map;
+}
+
+function renderUrlset(urls){
+  const items = urls.map(u=>`  <url><loc>${u}</loc></url>`).join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${items}\n</urlset>\n`;
+}
+
+function renderSitemapIndex(entries){
+  // entries: array of absolute sitemap URLs
+  const items = entries.map(u=>`  <sitemap><loc>${u}</loc></sitemap>`).join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${items}\n</sitemapindex>\n`;
+}
+
 async function buildAll(){
   await cleanOut();
   await writeStaticAssets();
 
   const names = await loadIndex();
   const nameSet = new Set(names);
+
   const books = new Map();
   for (const name of [...OT, ...NT]){
     if (!nameSet.has(name)) {
@@ -386,8 +403,7 @@ async function buildAll(){
   const refs = flattenRefs(books);
   console.log(`Loaded ${books.size} books; generating ${refs.length} verse pages…`);
 
-  // Create pages and build sitemap
-  let sitemap = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n`;
+  // Generate pages + collect URLs
   for (let i=0; i<refs.length; i++){
     const curr = refs[i];
     const prev = i>0 ? refs[i-1] : null;
@@ -408,15 +424,35 @@ async function buildAll(){
     });
 
     await fs.writeFile(path.join(outDir, "index.html"), html);
-    sitemap += `  <url><loc>${SITE}${verseUrl(curr)}</loc></url>\n`;
   }
-  sitemap += `</urlset>\n`;
-  await fs.writeFile(path.join(OUT_DIR, "sitemap.xml"), sitemap);
 
-  const robots = `User-agent: *\nAllow: /\nSitemap: ${SITE}/sitemap.xml\n`;
+  // ---- Sitemaps ----
+  const byBook = urlsByBook(refs);
+  const smDir = path.join(OUT_DIR, "sitemaps");
+  await ensureDir(smDir);
+
+  // main.xml for top-level pages
+  const mainUrls = [`${SITE}/`];
+  await fs.writeFile(path.join(smDir, "main.xml"), renderUrlset(mainUrls));
+
+  // per-book sitemaps
+  const smEntries = [`${SITE}/sitemaps/main.xml`];
+  for (const [slug, urls] of byBook.entries()){
+    const file = `${slug}.xml`;
+    await fs.writeFile(path.join(smDir, file), renderUrlset(urls));
+    smEntries.push(`${SITE}/sitemaps/${file}`);
+  }
+
+  // sitemap index + alias sitemap.xml
+  const smIndex = renderSitemapIndex(smEntries);
+  await fs.writeFile(path.join(OUT_DIR, "sitemap-index.xml"), smIndex);
+  await fs.writeFile(path.join(OUT_DIR, "sitemap.xml"), smIndex); // alias for convenience
+
+  // robots.txt points to the index
+  const robots = `User-agent: *\nAllow: /\nSitemap: ${SITE}/sitemap-index.xml\n`;
   await fs.writeFile(path.join(OUT_DIR, "robots.txt"), robots);
 
-  console.log("Build complete:", { pages: refs.length, out: OUT_DIR });
+  console.log("Build complete:", { pages: refs.length, out: OUT_DIR, sitemaps: smEntries.length });
 }
 
 // Run
