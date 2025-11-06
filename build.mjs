@@ -1,7 +1,5 @@
-// build.mjs — KJV Verse-per-Page static site builder (v1.2 Alpha + sitemap index)
-// Output: ./dist with /book-slug/chapter/verse/index.html for every verse
-// Also writes: /sitemap-index.xml and /sitemaps/<book>.xml (plus /sitemap.xml alias)
-// Node 18+ required (Node 20 recommended). package.json should set "type":"module".
+// build.mjs — KJV Verse-per-Page static site builder (v1.2 Alpha, with hubs + sitemap index)
+// Node 18+ (Node 20 recommended). package.json should set "type":"module".
 
 import fs from "fs/promises";
 import path from "path";
@@ -284,7 +282,7 @@ ${FONT_LINK}
 </body></html>`;
 }
 
-// Shared CSS (includes mobile fixes + visible icons)
+// Shared CSS (mobile fixes + visible icons)
 const CSS = `
 :root{--maxw:880px;--bg:#fff;--ink:#111;--muted:#666;--line:#eee}
 *{box-sizing:border-box}
@@ -324,7 +322,68 @@ a{color:inherit}
 }
 `;
 
-// -------- Build routine --------
+// ------- Book & Chapter index pages (crawl hubs) -------
+function bookIndexHTML(bookName, slug, chaptersCount) {
+  const chapterLinks = Array.from({length: chaptersCount}, (_,i)=> i+1)
+    .map(ch => `<li><a href="/${slug}/${ch}/">${bookName} ${ch}</a></li>`).join("");
+  return `<!DOCTYPE html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${bookName} (KJV) — Chapter Index</title>
+${FONT_LINK}<link rel="stylesheet" href="/assets/styles.css">
+<link rel="canonical" href="${SITE}/${slug}/">
+<meta name="robots" content="index,follow">
+</head><body>
+<header class="site-head">
+  <a class="brand" href="/"><img class="logo" alt="Living Word Bibles" src="${LOGO_URL}"></a>
+  <div class="brand-titles"><div class="brand-h1">The Holy Bible</div><div class="brand-h2">King James Version</div></div>
+  <nav class="site-nav"><a class="btn btn-primary" href="/genesis/1/1/">Start at Genesis 1:1</a></nav>
+</header>
+<main class="container">
+  <h1>${bookName} — Chapters</h1>
+  <ul class="booklist" style="columns:3">${chapterLinks}</ul>
+</main>
+<footer class="site-foot"><div>Copyright © 2025 | <a href="https://www.livingwordbibles.com" target="_blank" rel="noopener">Living Word Bibles</a></div>
+<div>The Holy Bible Online — v1.2 Alpha</div></footer>
+</body></html>`;
+}
+
+function chapterIndexHTML(bookName, slug, chapter, versesCount){
+  const verseLinks = Array.from({length: versesCount}, (_,i)=> i+1)
+    .map(v => `<li><a href="/${slug}/${chapter}/${v}/">${bookName} ${chapter}:${v}</a></li>`).join("");
+  return `<!DOCTYPE html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${bookName} ${chapter} (KJV) — Verse Index</title>
+${FONT_LINK}<link rel="stylesheet" href="/assets/styles.css">
+<link rel="canonical" href="${SITE}/${slug}/${chapter}/">
+<meta name="robots" content="index,follow">
+</head><body>
+<header class="site-head">
+  <a class="brand" href="/"><img class="logo" alt="Living Word Bibles" src="${LOGO_URL}"></a>
+  <div class="brand-titles"><div class="brand-h1">The Holy Bible</div><div class="brand-h2">King James Version</div></div>
+  <nav class="site-nav"><a class="btn btn-primary" href="/genesis/1/1/">Start at Genesis 1:1</a></nav>
+</header>
+<main class="container">
+  <h1>${bookName} ${chapter} — Verses</h1>
+  <ul class="booklist" style="columns:3">${verseLinks}</ul>
+</main>
+<footer class="site-foot"><div>Copyright © 2025 | <a href="https://www.livingwordbibles.com" target="_blank" rel="noopener">Living Word Bibles</a></div>
+<div>The Holy Bible Online — v1.2 Alpha</div></footer>
+</body></html>`;
+}
+
+// ------- Sitemaps with <lastmod> -------
+function renderUrlsetWithLastmod(items){
+  // items: [{loc,lastmod}]
+  const body = items.map(({loc,lastmod}) =>
+    `  <url><loc>${loc}</loc><lastmod>${lastmod}</lastmod></url>`).join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${body}\n</urlset>\n`;
+}
+function renderSitemapIndex(entries){
+  const body = entries.map(u=>`  <sitemap><loc>${u}</loc></sitemap>`).join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${body}\n</sitemapindex>\n`;
+}
+
+// ------- Build routine -------
 async function writeStaticAssets(){
   await ensureDir(path.join(OUT_DIR, "assets"));
   await fs.writeFile(path.join(OUT_DIR, "assets", "styles.css"), CSS);
@@ -361,25 +420,29 @@ function flattenRefs(booksMap){
   return out;
 }
 
-function urlsByBook(refs){
-  const map = new Map(); // slug -> array of absolute URLs
+// IMPORTANT: include /book/ and /book/chapter/ hubs in sitemaps with lastmod
+function urlsByBook(refs, booksMap){
+  const map = new Map(); // slug -> [{loc,lastmod}, ...]
+  const buildDate = new Date().toISOString();
+
+  // Seed each book with its book index + chapter index pages
+  for (const [slug, book] of booksMap.entries()){
+    const chNums = Object.keys(book.chapters).map(Number).sort((a,b)=>a-b);
+    const arr = map.get(slug) || [];
+    arr.push({ loc: `${SITE}/${slug}/`, lastmod: buildDate });
+    for (const ch of chNums){
+      arr.push({ loc: `${SITE}/${slug}/${ch}/`, lastmod: buildDate });
+    }
+    map.set(slug, arr);
+  }
+
+  // Add all verse URLs
   for (const r of refs){
-    const list = map.get(r.bookSlug) || [];
-    list.push(`${SITE}${verseUrl(r)}`);
-    map.set(r.bookSlug, list);
+    const arr = map.get(r.bookSlug) || [];
+    arr.push({ loc: `${SITE}/${r.bookSlug}/${r.chapter}/${r.verse}/`, lastmod: buildDate });
+    map.set(r.bookSlug, arr);
   }
   return map;
-}
-
-function renderUrlset(urls){
-  const items = urls.map(u=>`  <url><loc>${u}</loc></url>`).join("\n");
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${items}\n</urlset>\n`;
-}
-
-function renderSitemapIndex(entries){
-  // entries: array of absolute sitemap URLs
-  const items = entries.map(u=>`  <sitemap><loc>${u}</loc></sitemap>`).join("\n");
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${items}\n</sitemapindex>\n`;
 }
 
 async function buildAll(){
@@ -403,7 +466,25 @@ async function buildAll(){
   const refs = flattenRefs(books);
   console.log(`Loaded ${books.size} books; generating ${refs.length} verse pages…`);
 
-  // Generate pages + collect URLs
+  // Write book & chapter index pages (HTML crawl paths)
+  for (const [slug, book] of books.entries()){
+    const chNums = Object.keys(book.chapters).map(Number).sort((a,b)=>a-b);
+
+    // /book/
+    await fs.mkdir(path.join(OUT_DIR, slug), { recursive: true });
+    await fs.writeFile(path.join(OUT_DIR, slug, "index.html"),
+      bookIndexHTML(book.name, slug, chNums.length));
+
+    // /book/chapter/
+    for (const ch of chNums){
+      await fs.mkdir(path.join(OUT_DIR, slug, String(ch)), { recursive: true });
+      const versesCount = book.chapters[ch].verseCount || 1;
+      await fs.writeFile(path.join(OUT_DIR, slug, String(ch), "index.html"),
+        chapterIndexHTML(book.name, slug, ch, versesCount));
+    }
+  }
+
+  // Create per-verse pages
   for (let i=0; i<refs.length; i++){
     const curr = refs[i];
     const prev = i>0 ? refs[i-1] : null;
@@ -426,31 +507,31 @@ async function buildAll(){
     await fs.writeFile(path.join(outDir, "index.html"), html);
   }
 
-  // ---- Sitemaps ----
-  const byBook = urlsByBook(refs);
+  // ---- Sitemaps (with <lastmod> & added hubs) ----
+  const byBook = urlsByBook(refs, books);  // now includes /book/ and /book/chapter/
   const smDir = path.join(OUT_DIR, "sitemaps");
   await ensureDir(smDir);
 
-  // main.xml for top-level pages
-  const mainUrls = [`${SITE}/`];
-  await fs.writeFile(path.join(smDir, "main.xml"), renderUrlset(mainUrls));
+  // main.xml for homepage only (optional)
+  const buildDate = new Date().toISOString();
+  await fs.writeFile(path.join(smDir, "main.xml"),
+    renderUrlsetWithLastmod([{ loc: `${SITE}/`, lastmod: buildDate }]));
 
-  // per-book sitemaps
+  // per-book files
   const smEntries = [`${SITE}/sitemaps/main.xml`];
-  for (const [slug, urls] of byBook.entries()){
-    const file = `${slug}.xml`;
-    await fs.writeFile(path.join(smDir, file), renderUrlset(urls));
-    smEntries.push(`${SITE}/sitemaps/${file}`);
+  for (const [slug, items] of byBook.entries()){
+    await fs.writeFile(path.join(smDir, `${slug}.xml`), renderUrlsetWithLastmod(items));
+    smEntries.push(`${SITE}/sitemaps/${slug}.xml`);
   }
 
   // sitemap index + alias sitemap.xml
   const smIndex = renderSitemapIndex(smEntries);
   await fs.writeFile(path.join(OUT_DIR, "sitemap-index.xml"), smIndex);
-  await fs.writeFile(path.join(OUT_DIR, "sitemap.xml"), smIndex); // alias for convenience
+  await fs.writeFile(path.join(OUT_DIR, "sitemap.xml"), smIndex);
 
-  // robots.txt points to the index
-  const robots = `User-agent: *\nAllow: /\nSitemap: ${SITE}/sitemap-index.xml\n`;
-  await fs.writeFile(path.join(OUT_DIR, "robots.txt"), robots);
+  // robots.txt → index
+  await fs.writeFile(path.join(OUT_DIR, "robots.txt"),
+    `User-agent: *\nAllow: /\nSitemap: ${SITE}/sitemap-index.xml\n`);
 
   console.log("Build complete:", { pages: refs.length, out: OUT_DIR, sitemaps: smEntries.length });
 }
