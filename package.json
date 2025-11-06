@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node build.mjs"
+    "fetch:data": "node fetch-data.mjs",
+    "build": "node build.mjs",
+    "rebuild": "npm run fetch:data && npm run build"
   },
   "engines": {
     "node": ">=18"
