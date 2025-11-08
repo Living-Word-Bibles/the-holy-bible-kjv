@@ -1,4 +1,4 @@
-// build.mjs — KJV Verse-per-Page static site builder (v1.2 Alpha, with hubs + sitemap index)
+// build.mjs — KJV Verse-per-Page static site builder (v1.3 Alpha, with hubs + sitemap index + jump selectors)
 // Node 18+ (Node 20 recommended). package.json should set "type":"module".
 
 import fs from "fs/promises";
@@ -32,12 +32,12 @@ const OT = ['Genesis','Exodus','Leviticus','Numbers','Deuteronomy','Joshua','Jud
 const NT = ['Matthew','Mark','Luke','John','Acts','Romans','1 Corinthians','2 Corinthians','Galatians','Ephesians','Philippians','Colossians','1 Thessalonians','2 Thessalonians','1 Timothy','2 Timothy','Titus','Philemon','Hebrews','James','1 Peter','2 Peter','1 John','2 John','3 John','Jude','Revelation'];
 
 // -------- Utils --------
-const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
 const slugify = (s)=>String(s).trim().toLowerCase().replace(/[^a-z0-9\s]/g,"").replace(/\s+/g,"-");
 const fileFromName = (name)=>String(name).replace(/[^0-9A-Za-z]/g,"") + ".json";
 const escapeHtml = (s)=>String(s)
   .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
   .replaceAll('"',"&quot;").replaceAll("'","&#39;");
+const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
 
 // fs helpers
 async function ensureDir(d){ await fs.mkdir(d, {recursive:true}); }
@@ -135,7 +135,112 @@ function shareLinks(ref, bookName, verseText){
   };
 }
 
-function pageHTML({bookName, bookSlug, chapter, verse, verseText, totalVerses, prevRef, nextRef}){
+// ---- Jump (Book/Chapter/Verse) controls (HTML + JS) ----
+function jumpControlsHTML({ bookSlug, chapter, verse, navPayload }) {
+  const payload = JSON.stringify(navPayload);
+  return `
+  <section class="jump" aria-label="Go to Book / Chapter / Verse">
+    <label class="sr-only" for="jump-book">Book</label>
+    <select id="jump-book" class="jump__select" aria-label="Book"></select>
+
+    <label class="sr-only" for="jump-chapter">Chapter</label>
+    <select id="jump-chapter" class="jump__select" aria-label="Chapter"></select>
+
+    <label class="sr-only" for="jump-verse">Verse</label>
+    <select id="jump-verse" class="jump__select" aria-label="Verse"></select>
+  </section>
+
+  <script id="nav-data" type="application/json">${payload}</script>
+  <script>
+    (function(){
+      const dataEl = document.getElementById('nav-data');
+      if(!dataEl) return;
+      const NAV = JSON.parse(dataEl.textContent || '{}');
+
+      const BOOKS = NAV.books || {};
+      const OT = NAV.ot || [];
+      const NT = NAV.nt || [];
+
+      const current = { slug: ${JSON.stringify(bookSlug)}, chapter: ${Number(chapter)}, verse: ${Number(verse)} };
+
+      const $ = (s)=>document.querySelector(s);
+      const bookSel = $('#jump-book');
+      const chSel   = $('#jump-chapter');
+      const vSel    = $('#jump-verse');
+
+      function opt(v, t, sel){ const o = document.createElement('option'); o.value=v; o.textContent=t; if(sel) o.selected=true; return o; }
+
+      function fillBooks(){
+        const groups = [
+          ['Old Testament', OT],
+          ['New Testament', NT]
+        ];
+        bookSel.innerHTML = '';
+        for(const [label, list] of groups){
+          const og = document.createElement('optgroup'); og.label = label;
+          for(const item of list){
+            const meta = BOOKS[item.slug]; if(!meta) continue;
+            og.appendChild(opt(item.slug, item.name, item.slug === current.slug));
+          }
+          bookSel.appendChild(og);
+        }
+      }
+
+      function fillChapters(slug){
+        const meta = BOOKS[slug]; if(!meta) return;
+        chSel.innerHTML = '';
+        for(let i=1;i<=meta.chapters;i++){
+          chSel.appendChild(opt(String(i), String(i), i === current.chapter));
+        }
+      }
+
+      function fillVerses(slug, ch){
+        const meta = BOOKS[slug]; if(!meta) return;
+        const count = (meta.verses[String(ch)] || 1);
+        vSel.innerHTML = '';
+        for(let i=1;i<=count;i++){
+          vSel.appendChild(opt(String(i), String(i), i === current.verse));
+        }
+      }
+
+      function goto(slug, ch, v){
+        if(!slug) return;
+        ch = Math.max(1, parseInt(ch||'1',10));
+        v  = Math.max(1, parseInt(v ||'1',10));
+        const url = '/' + slug + '/' + ch + '/' + v + '/';
+        window.location.href = url;
+      }
+
+      // Init
+      fillBooks();
+      fillChapters(current.slug);
+      fillVerses(current.slug, current.chapter);
+
+      // Events
+      bookSel.addEventListener('change', ()=>{
+        const slug = bookSel.value;
+        current.slug = slug; current.chapter = 1; current.verse = 1;
+        fillChapters(slug);
+        fillVerses(slug, 1);
+        goto(slug, 1, 1);
+      });
+      chSel.addEventListener('change', ()=>{
+        const ch = parseInt(chSel.value, 10) || 1;
+        current.chapter = ch; current.verse = 1;
+        fillVerses(current.slug, ch);
+        goto(current.slug, ch, 1);
+      });
+      vSel.addEventListener('change', ()=>{
+        const v = parseInt(vSel.value, 10) || 1;
+        current.verse = v;
+        goto(current.slug, current.chapter, v);
+      });
+    })();
+  </script>
+  `;
+}
+
+function pageHTML({bookName, bookSlug, chapter, verse, verseText, totalVerses, prevRef, nextRef, navPayload}){
   const ref = {bookSlug, chapter, verse};
   const can = canonicalUrl(ref);
   const title = `The Holy Bible (KJV): ${bookName} ${chapter}:${verse}`;
@@ -180,7 +285,7 @@ ${JSON.stringify({
 </head>
 <body>
 <header class="site-head">
-  <a class="brand" href="/" aria-label="Home">
+  <a class="brand" href="https://www.livingwordbibles.com/read-the-bible-online" aria-label="Living Word Bibles — Read the Bible Online">
     <img class="logo" alt="Living Word Bibles" src="${LOGO_URL}">
   </a>
   <div class="brand-titles">
@@ -188,12 +293,15 @@ ${JSON.stringify({
     <div class="brand-h2">King James Version</div>
   </div>
   <nav class="site-nav">
-    <a class="btn btn-primary" href="https://www.livingwordbibles.com/read-the-bible-online#/genesis/1/1" target="_blank" rel="noopener">The Holy Bible</a>
+    <a class="btn btn-primary" href="${SITE}">The Holy Bible</a>
   </nav>
 </header>
 
 <main class="container">
   <h1 class="ref">${escapeHtml(bookName)} ${chapter}:${verse}</h1>
+
+  ${jumpControlsHTML({ bookSlug, chapter, verse, navPayload })}
+
   <article class="verse">
     <p><span class="vnum">${verse}</span> ${escapeHtml(verseText)}</p>
   </article>
@@ -218,7 +326,7 @@ ${JSON.stringify({
 
 <footer class="site-foot">
   <div>Copyright © 2025 | <a href="https://www.livingwordbibles.com" target="_blank" rel="noopener">Living Word Bibles</a> | All Rights Reserved</div>
-  <div>The Holy Bible Online — v1.2 Alpha</div>
+  <div>The Holy Bible Online — v1.3 Alpha</div>
 </footer>
 </body>
 </html>`;
@@ -241,7 +349,7 @@ ${FONT_LINK}
 </head>
 <body>
 <header class="site-head">
-  <a class="brand" href="/" aria-label="Home"><img class="logo" alt="Living Word Bibles" src="${LOGO_URL}"></a>
+  <a class="brand" href="https://www.livingwordbibles.com/read-the-bible-online" aria-label="Living Word Bibles — Read the Bible Online"><img class="logo" alt="Living Word Bibles" src="${LOGO_URL}"></a>
   <div class="brand-titles">
     <div class="brand-h1">The Holy Bible</div>
     <div class="brand-h2">King James Version</div>
@@ -261,7 +369,7 @@ ${FONT_LINK}
 </main>
 <footer class="site-foot">
   <div>Copyright © 2025 | <a href="https://www.livingwordbibles.com" target="_blank" rel="noopener">Living Word Bibles</a></div>
-  <div>The Holy Bible Online — v1.2 Alpha</div>
+  <div>The Holy Bible Online — v1.3 Alpha</div>
 </footer>
 </body>
 </html>`;
@@ -277,12 +385,12 @@ ${FONT_LINK}
 <main class="container"><h1>404 — Not Found</h1><p>Try starting at <a href="/genesis/1/1/">Genesis 1:1</a>.</p></main>
 <footer class="site-foot">
   <div>Copyright © 2025 | <a href="https://www.livingwordbibles.com" target="_blank" rel="noopener">Living Word Bibles</a></div>
-  <div>The Holy Bible Online — v1.2 Alpha</div>
+  <div>The Holy Bible Online — v1.3 Alpha</div>
 </footer>
 </body></html>`;
 }
 
-// Shared CSS (mobile fixes + visible icons)
+// Shared CSS (mobile fixes + visible icons + jump controls + larger logo)
 const CSS = `
 :root{--maxw:880px;--bg:#fff;--ink:#111;--muted:#666;--line:#eee}
 *{box-sizing:border-box}
@@ -292,7 +400,7 @@ a{color:inherit}
 .site-head,.site-foot{max-width:var(--maxw);margin:1rem auto;padding:.8rem 1rem;display:flex;align-items:center;gap:.8rem;background:#fff;border:1px solid #ddd;border-radius:16px}
 .site-head{justify-content:space-between;flex-wrap:wrap}
 .brand{display:flex;align-items:center;gap:.6rem;text-decoration:none}
-.logo{height:64px;object-fit:contain}
+.logo{height:96px;object-fit:contain}
 .brand-titles .brand-h1{font-weight:700;font-size:1.35rem}
 .brand-titles .brand-h2{font-size:1rem;color:#6b7280}
 .site-nav{display:flex;flex-wrap:wrap;gap:.5rem}
@@ -314,8 +422,13 @@ a{color:inherit}
 .booklist a{text-decoration:none;border-bottom:1px dotted #aaa}
 .toc-heading{font-size:1.15rem;margin:.6rem 0 .2rem;color:#333}
 .welcome{font-size:1.05rem;margin:0 0 .8rem}
+
+/* Jump controls */
+.jump{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:.4rem 0 1rem}
+.jump__select{font:inherit;border:1px solid #ccc;border-radius:10px;padding:.42rem .6rem;background:#fff;min-width:120px}
+
 @media (max-width:720px){
-  .logo{height:52px}
+  .logo{height:64px}
   .site-nav{width:100%;justify-content:center}
   .site-nav .btn{width:100%;justify-content:center}
   .booklist{columns:1}
@@ -334,16 +447,16 @@ ${FONT_LINK}<link rel="stylesheet" href="/assets/styles.css">
 <meta name="robots" content="index,follow">
 </head><body>
 <header class="site-head">
-  <a class="brand" href="/"><img class="logo" alt="Living Word Bibles" src="${LOGO_URL}"></a>
+  <a class="brand" href="https://www.livingwordbibles.com/read-the-bible-online"><img class="logo" alt="Living Word Bibles" src="${LOGO_URL}"></a>
   <div class="brand-titles"><div class="brand-h1">The Holy Bible</div><div class="brand-h2">King James Version</div></div>
-  <nav class="site-nav"><a class="btn btn-primary" href="/genesis/1/1/">Start at Genesis 1:1</a></nav>
+  <nav class="site-nav"><a class="btn btn-primary" href="${SITE}">The Holy Bible</a></nav>
 </header>
 <main class="container">
   <h1>${bookName} — Chapters</h1>
   <ul class="booklist" style="columns:3">${chapterLinks}</ul>
 </main>
 <footer class="site-foot"><div>Copyright © 2025 | <a href="https://www.livingwordbibles.com" target="_blank" rel="noopener">Living Word Bibles</a></div>
-<div>The Holy Bible Online — v1.2 Alpha</div></footer>
+<div>The Holy Bible Online — v1.3 Alpha</div></footer>
 </body></html>`;
 }
 
@@ -358,16 +471,16 @@ ${FONT_LINK}<link rel="stylesheet" href="/assets/styles.css">
 <meta name="robots" content="index,follow">
 </head><body>
 <header class="site-head">
-  <a class="brand" href="/"><img class="logo" alt="Living Word Bibles" src="${LOGO_URL}"></a>
+  <a class="brand" href="https://www.livingwordbibles.com/read-the-bible-online"><img class="logo" alt="Living Word Bibles" src="${LOGO_URL}"></a>
   <div class="brand-titles"><div class="brand-h1">The Holy Bible</div><div class="brand-h2">King James Version</div></div>
-  <nav class="site-nav"><a class="btn btn-primary" href="/genesis/1/1/">Start at Genesis 1:1</a></nav>
+  <nav class="site-nav"><a class="btn btn-primary" href="${SITE}">The Holy Bible</a></nav>
 </header>
 <main class="container">
   <h1>${bookName} ${chapter} — Verses</h1>
   <ul class="booklist" style="columns:3">${verseLinks}</ul>
 </main>
 <footer class="site-foot"><div>Copyright © 2025 | <a href="https://www.livingwordbibles.com" target="_blank" rel="noopener">Living Word Bibles</a></div>
-<div>The Holy Bible Online — v1.2 Alpha</div></footer>
+<div>The Holy Bible Online — v1.3 Alpha</div></footer>
 </body></html>`;
 }
 
@@ -463,6 +576,23 @@ async function buildAll(){
     books.set(slug, book);
   }
 
+  // Build nav payload (books -> {name, chapters, versesPerChapter})
+  const navBooks = {};
+  for (const [slug, book] of books.entries()){
+    const chNums = Object.keys(book.chapters).map(Number).sort((a,b)=>a-b);
+    const verses = {};
+    for (const ch of chNums){
+      verses[String(ch)] = book.chapters[ch].verseCount || 1;
+    }
+    navBooks[slug] = { name: book.name, chapters: chNums.length, verses };
+  }
+  const navPayloadBase = {
+    site: SITE,
+    books: navBooks,
+    ot: OT.map(n => ({ name:n, slug:slugify(n) })),
+    nt: NT.map(n => ({ name:n, slug:slugify(n) }))
+  };
+
   const refs = flattenRefs(books);
   console.log(`Loaded ${books.size} books; generating ${refs.length} verse pages…`);
 
@@ -501,7 +631,8 @@ async function buildAll(){
       verseText: curr.text,
       totalVerses: books.get(curr.bookSlug).chapters[curr.chapter].verseCount,
       prevRef: prev ? { bookSlug: prev.bookSlug, chapter: prev.chapter, verse: prev.verse } : null,
-      nextRef: next ? { bookSlug: next.bookSlug, chapter: next.chapter, verse: next.verse } : null
+      nextRef: next ? { bookSlug: next.bookSlug, chapter: next.chapter, verse: next.verse } : null,
+      navPayload: navPayloadBase
     });
 
     await fs.writeFile(path.join(outDir, "index.html"), html);
